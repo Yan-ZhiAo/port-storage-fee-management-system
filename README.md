@@ -92,7 +92,3 @@ npm run dev
 | `REDIS_PORT` | Redis 端口 | `6379` |
 
 前端可在 `Frontend/.env.development`、`Frontend/.env.production` 中配置 `VUE_APP_BASE_API`。
-
-## 说明
-
-仓库只提交源码、SQL 脚本、构建配置和必要静态资源；`node_modules`、后端 `target`、IDE 配置、日志和本地课程报告文档不会进入版本库。
