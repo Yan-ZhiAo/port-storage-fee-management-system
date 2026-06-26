@@ -1,0 +1,360 @@
+## 用户表(用户id,邮箱,密码)
+CREATE TABLE account(
+id BIGINT auto_increment PRIMARY KEY,
+email VARCHAR(255),
+username VARCHAR(255),
+password VARCHAR(255) NOT NULL
+);
+
+
+##公司表 ##(公司编号，公司名称，所属港口，负责人，电话，限时免费天数，费率,公司总堆存费,是否被删除(逻辑删除0/1判断),更新时间,更新人)
+CREATE TABLE IF NOT EXISTS company (
+    company_id VARCHAR(255) NOT NULL,
+    company_name VARCHAR(255) NOT NULL,
+    company_belong VARCHAR(255) NOT NULL,
+    company_principal VARCHAR(255) NOT NULL,
+    company_phone VARCHAR(255) NOT NULL,
+    company_freedays INT NOT NULL DEFAULT 0,
+    company_rate DOUBLE NOT NULL DEFAULT 0,
+    company_cost DOUBLE DEFAULT 0,
+    company_exist TINYINT(1) DEFAULT 0,
+    update_time datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    update_memeber VARCHAR(255) NOT NULL,
+    PRIMARY KEY (company_id)
+);
+
+
+## 仓库表(仓库id，仓库吨数余量，仓库件数余量，所属港口，所属公司,是否被删除(逻辑删除0/1判断),更新时间,更新人)
+CREATE TABLE IF NOT EXISTS store (
+    store_id VARCHAR(255) NOT NULL,
+    store_ton DOUBLE NOT NULL DEFAULT 0 CHECK(store_ton >= 0),
+    store_casenum INT NOT NULL DEFAULT 0,
+    store_belongport VARCHAR(255) NOT NULL,
+    store_belongcompany VARCHAR(255) NOT NULL,
+    store_exist TINYINT(1) DEFAULT 0,
+    update_time datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    update_member VARCHAR(255) NOT NULL,
+    PRIMARY KEY (store_id),
+    CONSTRAINT fk_store_company
+    FOREIGN KEY (store_belongcompany)
+    REFERENCES company(company_id)
+    ON DELETE CASCADE
+);
+
+
+## 入库表(入库id,时间,车牌号,多少吨,多少件,哪个仓库的,真实吨数(配合算法用),是否被删除(逻辑删除0/1判断),更新时间,更新人)
+CREATE TABLE IF NOT EXISTS instore (
+    in_id VARCHAR(255) NOT NULL,
+    in_time VARCHAR(255) NOT NULL,
+    in_carid VARCHAR(255) NOT NULL,
+    in_ton DOUBLE NOT NULL,
+    in_casenum INT NOT NULL,
+    in_storeid VARCHAR(255) NOT NULL,
+    real_ton DOUBLE NOT NULL,
+    in_exist TINYINT(1) DEFAULT 0,
+    update_time datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    update_member VARCHAR(255) NOT NULL,
+    PRIMARY KEY (in_id),
+    CONSTRAINT fk_instore_store
+    FOREIGN KEY (in_storeid)
+    REFERENCES store(store_id)
+    ON DELETE CASCADE
+);
+
+
+
+## 出库表(出库id,出库时间,出库件数,出库吨数,取货仓库,花多少钱,,是否被删除(逻辑删除0/1判断),更新时间,更新人)
+CREATE TABLE IF NOT EXISTS outstore (
+    out_id VARCHAR(255) NOT NULL,
+    out_date VARCHAR(255) NOT NULL,
+    out_casenum INT NOT NULL,
+    out_ton DOUBLE NOT NULL,
+    out_storeid VARCHAR(255) NOT NULL,
+    out_cost DOUBLE NOT NULL,
+    out_exist TINYINT(1) DEFAULT 0,
+    update_time datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    update_member VARCHAR(255) NOT NULL,
+    PRIMARY KEY (out_id),
+    CONSTRAINT fk_outstore_store
+    FOREIGN KEY (out_storeid)
+    REFERENCES store(store_id)
+    ON DELETE CASCADE
+);
+
+##创建触发器 如果增加入库记录之后 我们仓库的剩余吨数和件数都增加
+DELIMITER $$
+CREATE TRIGGER update_store_totals_trigger
+AFTER INSERT ON instore
+FOR EACH ROW
+BEGIN
+    UPDATE store
+    SET store_ton = store_ton + NEW.in_ton,
+        store_casenum = store_casenum + NEW.in_casenum
+    WHERE store_id = NEW.in_storeid;
+END$$
+DELIMITER ;
+
+## 创建触发器 如果我们插入入库记录后 我们的真实吨数等于我们插入进来的吨数(真实吨数会因为算法而减少)
+DELIMITER $$
+CREATE TRIGGER trg_insert_in_ton
+BEFORE INSERT ON instore
+FOR EACH ROW
+BEGIN
+    SET NEW.real_ton = NEW.in_ton;
+END$$
+DELIMITER ;
+
+
+## 创建触发器 删除入库记录后 我们仓库剩余的吨数和件数都要减少
+DELIMITER $$
+CREATE TRIGGER update_store_instore_logic_delete_trigger
+AFTER UPDATE ON instore
+FOR EACH ROW
+BEGIN
+    IF OLD.in_exist = 0 AND NEW.in_exist = 1 THEN
+        UPDATE store
+        SET store_ton = store_ton - OLD.in_ton,
+            store_casenum = store_casenum - OLD.in_casenum
+        WHERE store_id = OLD.in_storeid;
+    END IF;
+END$$
+DELIMITER ;
+
+
+## 创建触发器 增加出库记录后 仓库剩余量要随之减少
+DELIMITER $$
+CREATE TRIGGER update_store_outstore_trigger
+AFTER INSERT ON outstore
+FOR EACH ROW
+BEGIN
+    UPDATE store
+    SET store_ton = store_ton - NEW.out_ton,
+        store_casenum = store_casenum - NEW.out_casenum
+    WHERE store_id = NEW.out_storeid;
+END$$
+DELIMITER ;
+
+## 创建触发器 删除出库记录后 仓库余量要增多
+DELIMITER $$
+CREATE TRIGGER update_store_outstore_logic_delete_trigger
+AFTER UPDATE ON outstore
+FOR EACH ROW
+BEGIN
+    IF OLD.out_exist = 0 AND NEW.out_exist = 1 THEN
+        UPDATE store
+        SET store_ton = store_ton + OLD.out_ton,
+            store_casenum = store_casenum + OLD.out_casenum
+        WHERE store_id = OLD.out_storeid;
+    END IF;
+END$$
+DELIMITER ;
+
+
+## 创建触发器 增加出库记录后 我们要给公司的总堆存费增加
+DELIMITER $$
+
+CREATE TRIGGER update_company_cost AFTER INSERT ON outstore FOR EACH ROW 
+BEGIN
+    DECLARE company_id_var VARCHAR(255);
+    
+    -- 首先根据NEW.out_storeid找到对应的store_belongcompany
+    SELECT store_belongcompany INTO company_id_var
+    FROM store
+    WHERE store_id = NEW.out_storeid;
+
+    -- 然后根据公司名称找到对应的company_id
+    IF company_id_var IS NOT NULL THEN
+        SELECT company_id INTO company_id_var
+        FROM company
+        WHERE company_name = company_id_var;
+        
+        -- 确保找到了对应的公司ID
+        IF company_id_var IS NOT NULL THEN
+            UPDATE company
+            SET company_cost = company_cost + NEW.out_cost
+            WHERE company_id = company_id_var;
+        END IF;
+    END IF;
+END$$
+
+DELIMITER ;
+
+
+## 创建触发器 删除出库记录后 我们要给公司的总堆存费减少
+DELIMITER $$
+
+CREATE TRIGGER decrease_company_cost_after_delete
+AFTER DELETE ON outstore
+FOR EACH ROW
+BEGIN
+    DECLARE company_id_var VARCHAR(255);
+    DECLARE deleted_out_cost DOUBLE;
+
+    -- 获取被删除记录的出库成本
+    SET deleted_out_cost = OLD.out_cost;
+
+    -- 根据删除记录中的仓库ID找到对应的公司名称
+    SELECT store_belongcompany INTO company_id_var
+    FROM store
+    WHERE store_id = OLD.out_storeid;
+
+    -- 确保找到了对应的公司名称
+    IF company_id_var IS NOT NULL THEN
+        -- 根据公司名称找到对应的公司ID
+        SELECT company_id INTO company_id_var
+        FROM company
+        WHERE company_name = company_id_var;
+        
+        -- 确保找到了公司ID
+        IF company_id_var IS NOT NULL THEN
+            -- 更新公司总堆存费，减去删除的出库成本
+            UPDATE company
+            SET company_cost = company_cost - deleted_out_cost
+            WHERE company_id = company_id_var;
+        END IF;
+    END IF;
+END$$
+
+DELIMITER ;
+
+
+## 更新出库记录后，更新仓库的剩余吨数和件数
+DELIMITER $$
+CREATE TRIGGER update_store_on_outstore_update_trigger
+AFTER UPDATE ON outstore
+FOR EACH ROW
+BEGIN
+    -- 计算吨数和箱数的变化量
+    DECLARE ton_diff DECIMAL(10, 2);
+    DECLARE casenum_diff INT;
+    SET ton_diff = NEW.out_ton - OLD.out_ton;
+    SET casenum_diff = NEW.out_casenum - OLD.out_casenum;
+
+    -- 更新store表，根据变化量调整库存
+    UPDATE store
+    SET store_ton = store_ton - ton_diff,
+        store_casenum = store_casenum - casenum_diff
+    WHERE store_id = NEW.out_storeid;
+END$$
+DELIMITER ;
+
+
+## 更新入库记录后，更新仓库的剩余吨数和件数
+DELIMITER $$
+CREATE TRIGGER update_store_totals_on_update_trigger
+AFTER UPDATE ON instore
+FOR EACH ROW
+BEGIN
+    -- 计算吨数和箱数的变化量
+    DECLARE ton_diff DECIMAL(10, 2);
+    DECLARE casenum_diff INT;
+    SET ton_diff = NEW.in_ton - OLD.in_ton;
+    SET casenum_diff = NEW.in_casenum - OLD.in_casenum;
+
+    -- 更新store表，根据变化量调整库存
+    UPDATE store
+    SET store_ton = store_ton + ton_diff,
+        store_casenum = store_casenum + casenum_diff
+    WHERE store_id = NEW.in_storeid;
+END$$
+DELIMITER ;
+
+DELIMITER $$
+
+CREATE TRIGGER decrease_company_cost_on_logic_delete
+AFTER UPDATE ON outstore
+FOR EACH ROW
+BEGIN
+    DECLARE company_id_var VARCHAR(255);
+    DECLARE updated_out_cost DOUBLE;
+
+    -- 检查是否是将出库记录标记为已删除的操作
+    IF NEW.out_exist = 1 AND OLD.out_exist != NEW.out_exist THEN
+        -- 获取更新前的出库成本
+        SET updated_out_cost = OLD.out_cost;
+
+        -- 根据记录中的仓库ID找到对应的公司名称
+        SELECT store_belongcompany INTO company_id_var
+        FROM store
+        WHERE store_id = OLD.out_storeid;
+
+        -- 确保找到了对应的公司名称
+        IF company_id_var IS NOT NULL THEN
+            -- 根据公司名称找到对应的公司ID
+            SELECT company_id INTO company_id_var
+            FROM company
+            WHERE company_name = company_id_var;
+            
+            -- 确保找到了公司ID
+            IF company_id_var IS NOT NULL THEN
+                -- 更新公司总堆存费，减去标记为已删除的出库成本
+                UPDATE company
+                SET company_cost = company_cost - updated_out_cost
+                WHERE company_id = company_id_var;
+            END IF;
+        END IF;
+    END IF;
+END$$
+
+DELIMITER ;
+
+
+1. 公司及其所属仓库概览视图（展示每个公司的基本信息及关联的仓库数量）
+
+CREATE VIEW company_store_summary AS
+SELECT 
+    c.company_id, 
+    c.company_name, 
+    c.company_belong, 
+    COUNT(s.store_id) AS total_stores
+FROM 
+    company c
+LEFT JOIN 
+    store s ON c.company_id = s.store_belongcompany
+GROUP BY 
+    c.company_id;
+
+2. 仓库每日入库总量视图（展示每天各仓库的总入库吨数）
+
+CREATE VIEW daily_instore_summary AS
+SELECT 
+    DATE(in_time) AS in_date, 
+    in_storeid, 
+    SUM(in_ton) AS total_ton_in
+FROM 
+    instore
+GROUP BY 
+    in_date, in_storeid;
+
+3、仓库每日出库总量视图（展示每天各仓库的总出库吨数）
+
+CREATE VIEW daily_outstore_summary AS
+SELECT 
+    DATE(out_date) AS out_date, 
+    out_storeid, 
+    SUM(out_ton) AS total_ton_out
+FROM 
+    outstore
+WHERE 
+    out_exist = 0
+GROUP BY 
+    DATE(out_date), out_storeid;
+
+4. 仓库库存变化趋势视图（展示每个仓库随时间的吨数和件数变化）
+
+CREATE VIEW store_inventory_trend AS
+SELECT 
+    s.store_id, 
+    s.store_belongport, 
+    DATE(i.in_time) AS date, 
+    SUM(CASE WHEN i.in_exist = 0 THEN i.in_ton ELSE -i.real_ton END) AS net_ton_change, 
+    SUM(CASE WHEN i.in_exist = 0 THEN i.in_casenum ELSE -i.in_casenum END) AS net_case_change
+FROM 
+    store s
+LEFT JOIN 
+    instore i ON s.store_id = i.in_storeid
+GROUP BY 
+    s.store_id, DATE(i.in_time);
+
+
+

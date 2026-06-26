@@ -1,0 +1,33 @@
+# OS and editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.iml
+
+# Logs and local reports
+*.log
+*.docx
+
+# Java / Spring Boot
+Backend/Backend/target/
+Backend/Backend/.apt_generated/
+Backend/Backend/.classpath
+Backend/Backend/.factorypath
+Backend/Backend/.project
+Backend/Backend/.settings/
+Backend/Backend/.springBeans
+Backend/Backend/.sts4-cache/
+
+# Node / Vue
+Frontend/node_modules/
+Frontend/dist/
+Frontend/tests/**/coverage/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Local environment overrides
+.env
+.env.local
+*.local

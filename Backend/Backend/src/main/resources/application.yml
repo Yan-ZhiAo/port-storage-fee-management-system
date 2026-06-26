@@ -1,0 +1,16 @@
+server:
+  port: ${SERVER_PORT:6789}
+
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/sun?useUnicode=true&characterEncoding=UTF-8&useSSL=false&serverTimezone=Asia/Shanghai}
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:}
+  data:
+    redis:
+      port: ${REDIS_PORT:6379}
+      host: ${REDIS_HOST:localhost}
+
+logging:
+  level:
+    org.example: debug
